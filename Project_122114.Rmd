@@ -1,0 +1,139 @@
+```{r execution, echo=FALSE, results='hide', message=FALSE}
+cacheload = TRUE
+cachemgt = TRUE
+cachemodel = TRUE
+cachecv = TRUE
+cachepredict=TRUE
+```
+
+```{r setoptions, echo=FALSE}
+#set global options
+opts_chunk$set(echo=FALSE, message=FALSE, warning=FALSE)
+```
+
+```{r loadData, echo=FALSE, results='hide', message=FALSE, cache=cacheload}
+#Read datafiles and create training and testing object
+source("Source.R")
+```
+
+```{r dataMgt, echo=FALSE, results='hide', message=FALSE, cache=cachemgt}
+#any data management
+traindat = training[,8:160]
+trainnum = apply(traindat[,1:152], 2, as.numeric)
+#keep columns with less than 50% missing data 
+pctmiss = apply(trainnum, 2, function(x) sum(is.na(x))/length(x))
+keepcols = names(pctmiss)[pctmiss<.5]  #vector of column names
+trainset = data.frame(cbind(trainnum[,keepcols], traindat$classe)) #19622 x 53
+names(trainset)[53] = "classe"
+#modify test set to include only the columns in the training set plus the problem id
+testset = testing[,c(names(trainset[1:52]),"problem_id")]
+```
+
+
+
+---
+title: "Machine Learning Project"
+date:  December 21, 2014
+output: html_document
+---
+
+More individuals are tracking their fitness routines with personal electronic devices such as *Fitbit* and *Nike FuelBand* and are learning a great deal about their activity level and are able to monitor their progress over time.  What they can't do is measure how well they are performing specific exercises.  Research by Velloso et al. (2013) explores the potential of using a set of physical measurements taken during a workout to characterize the quality of execution of weight training exercises and provide individualized feedback. 
+
+## Data
+Six males, 20-28 years of age, participated in a weight lifting experiment.  Accelerometers were placed on the belt, forearm, arm and dumbbell and participants were asked to perform a set of ten repetitions of a five different versions of a biceps curl; one version used the correct technique while the other four modelled common mistakes.  Raw accelerometer, gyroscope and magnetometer readings were used to detect biceps curl mistakes.
+
+The initial training dataset was reduced to exclude any variables with over 50% of the observations missing; this resulted in 52 predictor variables and a single outcome variable that represented five versions of biceps curl (denoted A, B, C, D, and E).  From a total of 19,622 observations in the training set, the number of observations associated with each outcome classification is:  
+
+```{r createtable, results='asis', echo=FALSE}
+df = as.data.frame(t(rbind(names(table(trainset$classe)), table(trainset$classe))))
+#cat("Classification of Bicep Curl| Count", "--- | ---", sep="\n")
+cat(apply(df, 1, function(X) paste(X, collapse=" = ")), sep = ", ")
+```
+
+Here, A represents a correct bicep curl, B is throwing the elbows to the front, C is lifting the dumbbell only halfway, D is lowering the dumbbell only halfway, and E is throwing the hips to the front.  
+
+## Model
+The goal is to develop a model that accurately predicts the execution classification of a bicep curl based on a set of physical measurements.  We choose to implement a Random Forest prediction model because it is robust to inclusion of unnecessary predictor variables and builds in the bagging method to reduce the variance and minimize overfitting.  The Random Forest model is based on Breiman's algorithm for classification and regression and is implemented using the randomForest R package.
+
+Using the full training set of 19,622 observations and 52 predictors, the Random Forest model produced classifications of under one percent for each outcome category, with only 55 errors in classification total.  The overall error rate on the training set was .28%.  There was an initial strong decline in the error rate that largely settled down after the first fifty trees (see Appendix).  The variables that made the strongest contribution to the model in terms of accuracy were:  yaw_belt, roll_belt, pitch_belt, magnet_dumbbell_z, and pitch_forearm.  See figure in the Appendix for a summary of the importance of model predictors.  
+
+To estimate the out-of-sample error, we performed a 3-fold cross validation using the training dataset and obtain an average error rate estimate of .53%.  This is slightly higher than that from the initial model fit. 
+ 
+
+## Prediction
+We predicted 20 bicep curl cases using the test dataset and all of the predictions were accurate.  Prediction accuracy could be further explored with a larger test dataset.
+
+
+## Further Work
+Since the prediction algorithm is highly accurate, with an error rate below 1%, a next step could be to investigate whether it is possible to produce an accurate algorithm with fewer predictors.  We could use the most important five variables identified from the model fit (yaw_belt, roll_belt, pitch_belt, magnet_dumbbell_z, and pitch_forearm) and assess whether they are sufficient to provide accurate predictions.  We might also consider exploring tiered products and developing prediction algorithms for each product level.  Here, we might interface with the engineering team and identify sets of measurements that are easy and inexpensive to capture and others that require more investment.  We could then seek to characterize the information required to achieve specified levels of accuracy given these defined measurement subsets.
+
+```{r modfit, echo=FALSE, results='hide', message=FALSE, cache=cachemodel}
+set.seed(7893)
+library(caret)
+library(randomForest)
+modFit0 = randomForest(x=trainset[,1:52], y=factor(trainset$classe), importance=TRUE, preProcess=c("center","scale")) 
+modFit = randomForest(x=trainset[,1:52], y=factor(trainset$classe), importance=TRUE) #1:32AM
+print(modFit)
+imp = round(importance(modFit),2)
+imp[order(imp[,7], decreasing=TRUE),]
+confMat = modFit$confusion
+#Estimate of error rate:  0.28%; confusion matrix 
+```
+
+
+
+```{r crossval, echo=FALSE, results='hide', message=FALSE, cache=cachecv}
+#cross validation
+#estimate the out-of-sample error rate by using K-fold sampling where K=3
+#create 3 train/test sets from the trainset data  #6540, 6541, 6541 obs
+#build a model on the training set and evaluate on the test set (do for each of the 3 sets)
+#average over the estimation errors to estimate the out-of-sample error rate
+set.seed(23819)
+folds = createFolds(y=factor(trainset$classe), k=3, list=TRUE, returnTrain=TRUE)
+modFit1 = randomForest(x=trainset[folds$Fold1,1:52], y=factor(trainset[folds$Fold1,"classe"]),importance=TRUE)
+confusionMatrix(factor(trainset[-folds$Fold1,"classe"]), predict(modFit1, trainset[-folds$Fold1,]))
+modFit2 = randomForest(x=trainset[folds$Fold2,1:52], y=factor(trainset[folds$Fold2,"classe"]),importance=TRUE)
+confusionMatrix(factor(trainset[-folds$Fold2,"classe"]), predict(modFit2, trainset[-folds$Fold2,]))
+modFit3 = randomForest(x=trainset[folds$Fold3,1:52], y=factor(trainset[folds$Fold3,"classe"]),importance=TRUE)
+confusionMatrix(factor(trainset[-folds$Fold3,"classe"]), predict(modFit3, trainset[-folds$Fold3,]))
+#fit1 accuracy .993
+#fit2 accuracy .994
+#fit3 accuracy .997
+#average = .9947; error rate of .533%
+```
+
+```{r predict, echo=FALSE, results='hide', message=FALSE, cache=cachepredict}
+#predict 20
+answers = predict(modFit, testset)
+pml_write_files = function(x){
+        n = length(x)
+        for(i in 1:n){
+                filename = paste0("problem_id_",i,".txt")
+                write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+        }
+}
+pml_write_files(answers)
+```
+
+
+## Appendix
+```{r}
+#visually inspect data
+library(caret)
+library(randomForest)
+#plot(trainset$roll_belt, factor(trainset$classe))
+#plot(modFit)
+par(mar=c(5,0,4,2))
+plot(modFit, log="y", main="Model Fit")
+legend("topright", colnames(modFit$err.rate),col=1:6,cex=0.8,fill=1:6)  #includes OOB line - out-of-bag
+varImpPlot(modFit, main="",col="dark blue")
+title(main="Variable Importance")
+```
+
+## References
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+
+
+
+
